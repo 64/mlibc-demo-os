@@ -1,0 +1,10 @@
+[package]
+name = "mlibc-demo-os"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fdt = "0.1.5"
+log = "0.4.22"
+riscv = "0.12.1"
+sbi = "0.3.0"
