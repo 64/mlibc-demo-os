@@ -3,26 +3,31 @@
 #![feature(fn_align)]
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
+#![feature(extern_types)]
 
 extern crate alloc;
 
-use core::{fmt::Write, panic::PanicInfo};
+use core::{
+    fmt::Write,
+    panic::PanicInfo,
+};
 
 use log::{info, LevelFilter};
 use logger::UartLogger;
+use page_table::PageTable;
 use riscv::register::{
     scause, sepc, stval,
     stvec::{self, TrapMode},
 };
 
+mod allocator;
 mod logger;
 mod page_table;
-mod allocator;
 
 core::arch::global_asm!(include_str!("boot.asm"));
 
 #[no_mangle]
-extern "C" fn kernel_main(_hart_id: u64, _dtb: *const u8) {
+extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
     unsafe {
         stvec::write(trap_handler as usize, TrapMode::Direct);
     }
@@ -30,20 +35,37 @@ extern "C" fn kernel_main(_hart_id: u64, _dtb: *const u8) {
     logger::init(LevelFilter::Trace);
     info!("Booting mlibc-demo-os...");
 
-    loop {}
+    let fdt = unsafe { fdt::Fdt::from_ptr(dtb).unwrap() };
+    allocator::init(&fdt);
+
+    let mut root_pt = PageTable::new();
+    root_pt.map_higher_half();
+
+    let satp = (8 << 60) | (&root_pt as *const PageTable as usize >> 12);
+    riscv::register::satp::write(satp);
+    logger::paging_initialised();
+
+    info!("Paging initialised.");
+
+    root_pt.map_page(0x40000, page_table::READ);
+
+    info!("Halting...");
+    exit();
 }
 
-#[panic_handler]
-fn abort(info: &PanicInfo) -> ! {
-    let _ = writeln!(UartLogger, "\x1b[31mKERNEL PANIC:\x1b[0m {info}");
-
+fn exit() -> ! {
     sbi::system_reset::system_reset(
         sbi::system_reset::ResetType::Shutdown,
         sbi::system_reset::ResetReason::NoReason,
     )
     .unwrap_or_else(|_| loop {});
-
     unreachable!()
+}
+
+#[panic_handler]
+fn abort(info: &PanicInfo) -> ! {
+    let _ = writeln!(UartLogger, "\x1b[31mKERNEL PANIC:\x1b[0m {info}");
+    exit();
 }
 
 #[repr(align(4))]

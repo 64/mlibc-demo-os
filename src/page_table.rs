@@ -1,6 +1,7 @@
-use core::alloc::{Allocator, Layout};
+use core::alloc::Layout;
 
-use alloc::alloc::Global;
+use alloc::boxed::Box;
+use log::debug;
 
 #[repr(align(4096))]
 pub struct PageTable {
@@ -12,41 +13,44 @@ pub const READ: u64 = 1 << 1;
 pub const WRITE: u64 = 1 << 2;
 pub const EXECUTE: u64 = 1 << 3;
 pub const GLOBAL: u64 = 1 << 5;
-pub const DIRTY: u64 = 1 << 6;
-pub const ACCESSED: u64 = 1 << 7;
+
 pub const PTE_PPN_MASK: u64 = 0xff_ffff_ffff_fc00;
 pub const USEFUL_FLAGS_MASK: u64 = 0x3f;
 
-const PAGE_LAYOUT: Layout = Layout::new::<PageTable>();
+pub const PAGE_LAYOUT: Layout = Layout::new::<PageTable>();
 
 impl PageTable {
     pub fn new() -> Self {
         Self { entries: [0; 512] }
     }
 
-    pub fn new_at(addr: *mut u8) -> &'static mut Self {
-        assert!(addr as usize & 0xfff == 0);
-        unsafe {
-            let addr = addr as *mut PageTable;
-            addr.write_volatile(Self::new());
-            &mut *addr
+    // For the root page table only.
+    pub fn map_higher_half(&mut self) {
+        for (i, entry) in self.entries.iter_mut().enumerate() {
+            if i == 0 {
+                // Leave the first 1GiB unmapped for userspace.
+                continue;
+            } else if i == 511 {
+                // Map the zero 1GiB page at 511GiB. Useful for MMIO (UART).
+                *entry = READ | WRITE | EXECUTE | GLOBAL | VALID;
+            } else {
+                *entry = (i as u64) << 28 | READ | WRITE | EXECUTE | GLOBAL | VALID;
+            }
         }
-    }
-
-    pub fn linear_map_all(&mut self) {
-        // Linearly map 64GiB of physical memory to 0xffff_ffc0_0000_0000
-        let off = 256;
-        let flags = VALID | READ | WRITE | GLOBAL | DIRTY | ACCESSED;
-        for i in off..(off + 64) {
-            let ppn_2 = (i - off << 28) as u64;
-            self.entries[i] = ppn_2 | flags;
-        }
+        riscv::asm::sfence_vma_all();
     }
 
     pub fn map_page(&mut self, virt: u64, flags: u64) -> *mut u8 {
-        // info!("mapping {:#x} with flags {:#b}", virt, flags);
-        assert!((flags & VALID == VALID) && flags & (READ | WRITE | EXECUTE) != 0);
-        self.do_map(virt & !0xfff, flags & USEFUL_FLAGS_MASK, 2)
+        assert!(flags & (READ | WRITE | EXECUTE) != 0);
+
+        let out = self.do_map(virt & !0xfff, (flags | VALID) & USEFUL_FLAGS_MASK, 2);
+        riscv::asm::sfence_vma_all();
+
+        debug!(
+            "Mapped virtual address {:#x} -> physical address {:#x} with flags {:#b}",
+            virt, out as u64, flags
+        );
+        out
     }
 
     fn do_map(&mut self, virt: u64, flags: u64, depth: usize) -> *mut u8 {
@@ -56,46 +60,28 @@ impl PageTable {
             (virt >> 30) & 0x1ff,
         ];
 
-        let leaf = depth == 0;
         let entry = &mut self.entries[vpn[depth] as usize];
 
-        let target = if leaf {
-            if *entry & VALID == 0 {
-                assert!(*entry & VALID == 0);
-                let mem = Global.allocate(PAGE_LAYOUT).unwrap();
-                let addr = mem.as_ptr().as_mut_ptr();
-                // trace!("allocating new page at {:#x}", addr);
-                Some(addr as u64)
-            } else {
-                unreachable!()
-                // let existing_flags = *entry & USEFUL_FLAGS_MASK;
-                // // trace!("hit existing mapping with flags {:#b}",
-                // existing_flags); assert_eq!(existing_flags,
-                // flags); Some(*entry & PTE_PPN_MASK << 2)
-            }
-        } else if *entry & VALID == 0 {
-            let mem = Global.allocate(PAGE_LAYOUT).unwrap();
-            let addr = mem.as_ptr().as_mut_ptr();
-            PageTable::new_at(addr);
-            Some(addr as u64)
-        } else {
-            None
-        };
-
-        if let Some(target) = target {
-            // Write an entry into the page table.
-            *entry = (target >> 2 & PTE_PPN_MASK) | if leaf { flags } else { 0 };
+        // Leaf, just allocate an empty page and return.
+        if depth == 0 {
+            assert!(*entry & VALID == 0);
+            *entry |= VALID | flags;
+            let pt = Box::new(PageTable::new());
+            return Box::leak(pt) as *mut PageTable as *mut u8;
         }
-        *entry |= VALID;
 
-        if leaf {
-            target.unwrap() as *mut u8
-        } else {
-            // Read out the address of the page table, and recurse down.
-            let addr = (*entry & PTE_PPN_MASK) << 2;
-            let page_table = unsafe { &mut *(addr as *mut PageTable) };
-            assert!(!core::ptr::eq(self, page_table));
-            page_table.do_map(virt, flags, depth - 1)
+        // Allocate a new intermediate page table if necessary.
+        if *entry & VALID == 0 {
+            let pt = Box::new(PageTable::new());
+            let target = Box::leak(pt) as *mut PageTable as u64;
+            *entry = (target >> 2 & PTE_PPN_MASK) | VALID;
         }
+
+        // Extract the address of the next level of PT we need to modify.
+        let addr = (*entry & PTE_PPN_MASK) << 2;
+        let page_table = unsafe { &mut *(addr as *mut PageTable) };
+        assert!(!core::ptr::eq(self, page_table));
+
+        page_table.do_map(virt, flags, depth - 1)
     }
 }

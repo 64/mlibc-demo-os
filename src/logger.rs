@@ -1,12 +1,21 @@
-use core::{fmt, fmt::Write};
+use core::{
+    fmt::{self, Write},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use log::{Level, LevelFilter, Metadata, Record};
 
 pub struct UartLogger;
+static PAGING_INITIALISED: AtomicBool = AtomicBool::new(false);
 static LOGGER: UartLogger = UartLogger;
 
 impl UartLogger {
     fn write(&mut self, c: u8) {
-        unsafe { (0x1000_0000 as *mut u8).write_volatile(c) };
+        let mut addr = 0x1000_0000usize;
+        if PAGING_INITIALISED.load(Ordering::Relaxed) {
+            // Mapped at 511GiB offset.
+            addr += 0xffffffffc0000000;
+        }
+        unsafe { (addr as *mut u8).write_volatile(c) };
     }
 }
 
@@ -59,4 +68,8 @@ pub fn init(level: LevelFilter) {
     log::set_logger(&LOGGER)
         .map(|()| log::set_max_level(level))
         .unwrap()
+}
+
+pub fn paging_initialised() {
+    PAGING_INITIALISED.store(true, Ordering::Relaxed);
 }
