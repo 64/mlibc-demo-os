@@ -4,14 +4,13 @@
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(extern_types)]
+#![feature(slice_take)]
 
 extern crate alloc;
 
-use core::{
-    fmt::Write,
-    panic::PanicInfo,
-};
+use core::{fmt::Write, panic::PanicInfo};
 
+use alloc::boxed::Box;
 use log::{info, LevelFilter};
 use logger::UartLogger;
 use page_table::PageTable;
@@ -23,8 +22,14 @@ use riscv::register::{
 mod allocator;
 mod logger;
 mod page_table;
+mod userspace;
 
 core::arch::global_asm!(include_str!("boot.asm"));
+core::arch::global_asm!(include_str!("trap_handler.asm"));
+
+extern "C" {
+    fn trap_handler() -> !;
+}
 
 #[no_mangle]
 extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
@@ -38,16 +43,14 @@ extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb).unwrap() };
     allocator::init(&fdt);
 
-    let mut root_pt = PageTable::new();
+    let mut root_pt = Box::new(PageTable::new());
     root_pt.map_higher_half();
 
-    let satp = (8 << 60) | (&root_pt as *const PageTable as usize >> 12);
+    let satp = (8 << 60) | (&*root_pt as *const PageTable as usize >> 12);
     riscv::register::satp::write(satp);
     logger::paging_initialised();
 
-    info!("Paging initialised.");
-
-    root_pt.map_page(0x40000, page_table::READ);
+    userspace::init(&mut root_pt);
 
     info!("Halting...");
     exit();
@@ -68,23 +71,34 @@ fn abort(info: &PanicInfo) -> ! {
     exit();
 }
 
-#[repr(align(4))]
-fn trap_handler() {
-    let _ = writeln!(
-        UartLogger,
-        concat!(
-            "---------------------------\n",
-            "[\x1b[31mKERNEL TRAP\x1b[0m] \x1b[31m{:?}\x1b[0m with stval = {:#x}, sepc = {:#x}",
-        ),
-        scause::read().cause(),
-        stval::read(),
-        sepc::read(),
-    );
+#[repr(C)]
+struct TrapFrame {
+    sp: u64,
+    a0: u64,
+}
 
-    let _ = sbi::system_reset::system_reset(
-        sbi::system_reset::ResetType::Shutdown,
-        sbi::system_reset::ResetReason::NoReason,
-    );
+#[no_mangle]
+extern "C" fn rust_trap_handler(frame: &mut TrapFrame) {
+    let scause = scause::read();
+    if scause.is_exception() && scause.code() == 8 {
+        userspace::handle_ecall(frame);
+    } else {
+        let _ = writeln!(
+            UartLogger,
+            concat!(
+                "---------------------------\n",
+                "[\x1b[31mKERNEL TRAP\x1b[0m] \x1b[31m{:?}\x1b[0m with stval = {:#x}, sepc = {:#x}",
+            ),
+            scause.cause(),
+            stval::read(),
+            sepc::read(),
+        );
 
-    loop {}
+        let _ = sbi::system_reset::system_reset(
+            sbi::system_reset::ResetType::Shutdown,
+            sbi::system_reset::ResetReason::NoReason,
+        );
+
+        loop {}
+    }
 }

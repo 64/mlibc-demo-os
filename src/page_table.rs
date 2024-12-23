@@ -1,6 +1,6 @@
-use core::alloc::Layout;
+use core::alloc::{Allocator, Layout};
 
-use alloc::boxed::Box;
+use alloc::{alloc::Global, boxed::Box};
 use log::debug;
 
 #[repr(align(4096))]
@@ -12,12 +12,11 @@ pub const VALID: u64 = 1;
 pub const READ: u64 = 1 << 1;
 pub const WRITE: u64 = 1 << 2;
 pub const EXECUTE: u64 = 1 << 3;
+pub const USER: u64 = 1 << 4;
 pub const GLOBAL: u64 = 1 << 5;
 
 pub const PTE_PPN_MASK: u64 = 0xff_ffff_ffff_fc00;
 pub const USEFUL_FLAGS_MASK: u64 = 0x3f;
-
-pub const PAGE_LAYOUT: Layout = Layout::new::<PageTable>();
 
 impl PageTable {
     pub fn new() -> Self {
@@ -65,9 +64,17 @@ impl PageTable {
         // Leaf, just allocate an empty page and return.
         if depth == 0 {
             assert!(*entry & VALID == 0);
-            *entry |= VALID | flags;
-            let pt = Box::new(PageTable::new());
-            return Box::leak(pt) as *mut PageTable as *mut u8;
+
+            let mut page = Global
+                .allocate(Layout::from_size_align(0x1000, 0x100).unwrap())
+                .unwrap();
+            unsafe {
+                page.as_mut().fill(0);
+            }
+
+            let page_addr = page.as_ptr().as_mut_ptr() as u64;
+            *entry = (page_addr >> 2 & PTE_PPN_MASK) | VALID | flags;
+            return page_addr as *mut u8;
         }
 
         // Allocate a new intermediate page table if necessary.

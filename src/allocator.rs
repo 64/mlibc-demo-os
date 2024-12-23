@@ -1,7 +1,7 @@
 use core::{alloc::GlobalAlloc, ptr::null_mut};
 
 use fdt::Fdt;
-use log::{info, trace};
+use log::{debug, trace};
 
 const MAX_SUPPORTED_ALIGN: usize = 4096;
 
@@ -23,7 +23,6 @@ impl BumpAllocator {
         if alloc_end > self.region.len() {
             return null_mut();
         }
-
 
         self.pos = alloc_end;
         let out = self.region.as_mut_ptr().wrapping_add(alloc_start);
@@ -65,7 +64,7 @@ pub fn init(fdt: &Fdt) {
     start_addr = start_addr.max(kernel_end_addr);
 
     assert_eq!(start_addr % 0x1000, 0);
-    info!(
+    debug!(
         "Initialised allocator: {:#x}, {} MiB",
         start_addr,
         (end_addr - start_addr) / 1024 / 1024

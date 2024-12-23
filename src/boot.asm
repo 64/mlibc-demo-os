@@ -15,6 +15,7 @@ _start:
 .bss_zero_loop_end:
 
     la sp, stack_top
+    csrw sscratch, sp
 
     # Jump to Rust.
     jal kernel_main
