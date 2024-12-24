@@ -1,7 +1,6 @@
 use core::alloc::{Allocator, Layout};
 
 use alloc::{alloc::Global, boxed::Box};
-use log::debug;
 
 #[repr(align(4096))]
 pub struct PageTable {
@@ -45,10 +44,10 @@ impl PageTable {
         let out = self.do_map(virt & !0xfff, (flags | VALID) & USEFUL_FLAGS_MASK, 2);
         riscv::asm::sfence_vma_all();
 
-        debug!(
-            "Mapped virtual address {:#x} -> physical address {:#x} with flags {:#b}",
-            virt, out as u64, flags
-        );
+        // debug!(
+        //     "Mapped virtual address {:#x} -> physical address {:#x} with flags
+        // {:#b}",     virt, out as u64, flags
+        // );
         out
     }
 

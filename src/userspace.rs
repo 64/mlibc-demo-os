@@ -1,13 +1,13 @@
-use core::{arch::asm, cmp, ptr};
+use core::{cmp, ptr};
 
 use log::info;
-use riscv::register::{sepc, sstatus::SPP};
+use riscv::register::sstatus::SPP;
 use xmas_elf::{
     program::{SegmentData, Type},
     ElfFile,
 };
 
-use crate::{page_table::{PageTable, EXECUTE, READ, USER, VALID, WRITE}, TrapFrame};
+use crate::page_table::{PageTable, EXECUTE, READ, USER, VALID, WRITE};
 
 const USERSPACE_BINARY: &[u8] = include_bytes!("../target/riscv64imac-unknown-none-elf/user_test");
 
@@ -28,14 +28,6 @@ pub fn init(root: &mut PageTable) {
         riscv::register::sepc::write(entry as usize);
         ret_to_user(stack);
     }
-}
-
-pub fn handle_ecall(frame: &mut TrapFrame) {
-    let sepc = sepc::read();
-    info!("Handling syscall {} (sepc = {:x})", frame.a0, sepc);
-
-    // sepc points to the ecall instruction; prepare returning to the next one.
-    sepc::write(sepc + 4);
 }
 
 pub fn load_elf(root: &mut PageTable) -> u64 {

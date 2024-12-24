@@ -1,7 +1,7 @@
 use core::{alloc::GlobalAlloc, ptr::null_mut};
 
 use fdt::Fdt;
-use log::{debug, trace};
+use log::debug;
 
 const MAX_SUPPORTED_ALIGN: usize = 4096;
 
@@ -26,7 +26,7 @@ impl BumpAllocator {
 
         self.pos = alloc_end;
         let out = self.region.as_mut_ptr().wrapping_add(alloc_start);
-        trace!("Allocated {} bytes at 0x{:x}", size, out as usize);
+        // trace!("Allocated {} bytes at 0x{:x}", size, out as usize);
         out
     }
 }

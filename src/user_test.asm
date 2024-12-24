@@ -1,10 +1,18 @@
+.section .rodata
+helloworld:
+    .ascii "Hello World!\n"
+
 .section .text
 .global _start
 _start:
-    li a0, 123
+    # Write
+    li a0, 1
+    li a1, 1
+    la a2, helloworld
+    li a3, 13
     ecall
-    li a0, 456
-    ecall
-.done:
-    j .done
 
+    # Exit
+    li a0, 0
+    li a1, 123
+    ecall

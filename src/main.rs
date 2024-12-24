@@ -6,6 +6,7 @@
 #![feature(extern_types)]
 #![feature(slice_take)]
 
+#[macro_use]
 extern crate alloc;
 
 use core::{fmt::Write, panic::PanicInfo};
@@ -22,6 +23,7 @@ use riscv::register::{
 mod allocator;
 mod logger;
 mod page_table;
+mod syscalls;
 mod userspace;
 
 core::arch::global_asm!(include_str!("boot.asm"));
@@ -56,7 +58,7 @@ extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
     exit();
 }
 
-fn exit() -> ! {
+pub fn exit() -> ! {
     sbi::system_reset::system_reset(
         sbi::system_reset::ResetType::Shutdown,
         sbi::system_reset::ResetReason::NoReason,
@@ -72,16 +74,46 @@ fn abort(info: &PanicInfo) -> ! {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct TrapFrame {
     sp: u64,
     a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    a5: u64,
+    a6: u64,
+    a7: u64,
+    t0: u64,
+    t1: u64,
+    t2: u64,
+    t3: u64,
+    t4: u64,
+    t5: u64,
+    s0: u64,
+    s1: u64,
+    s2: u64,
+    s3: u64,
+    s4: u64,
+    s5: u64,
+    s6: u64,
+    s7: u64,
+    s8: u64,
+    s9: u64,
+    s10: u64,
+    s11: u64,
+    ra: u64,
+    tp: u64,
+    gp: u64,
+    t6: u64,
 }
 
 #[no_mangle]
 extern "C" fn rust_trap_handler(frame: &mut TrapFrame) {
     let scause = scause::read();
     if scause.is_exception() && scause.code() == 8 {
-        userspace::handle_ecall(frame);
+        syscalls::handle_syscall(frame);
     } else {
         let _ = writeln!(
             UartLogger,

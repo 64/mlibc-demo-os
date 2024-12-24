@@ -9,7 +9,7 @@ static PAGING_INITIALISED: AtomicBool = AtomicBool::new(false);
 static LOGGER: UartLogger = UartLogger;
 
 impl UartLogger {
-    fn write(&mut self, c: u8) {
+    pub fn write(&mut self, c: u8) {
         let mut addr = 0x1000_0000usize;
         if PAGING_INITIALISED.load(Ordering::Relaxed) {
             // Mapped at 511GiB offset.
