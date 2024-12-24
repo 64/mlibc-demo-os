@@ -62,7 +62,12 @@ impl PageTable {
 
         // Leaf, just allocate an empty page and return.
         if depth == 0 {
-            assert!(*entry & VALID == 0);
+            if *entry & VALID != 0 {
+                // There's already a page here. Update flags.
+                *entry &= !USEFUL_FLAGS_MASK;
+                *entry |= flags;
+                return ((*entry & PTE_PPN_MASK) << 2) as *mut u8;
+            }
 
             let mut page = Global
                 .allocate(Layout::from_size_align(0x1000, 0x100).unwrap())

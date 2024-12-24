@@ -8,13 +8,16 @@ use crate::{logger::UartLogger, TrapFrame};
 enum Syscall {
     Exit,
     Write,
+    Mmap,
 }
 
 impl From<u64> for Syscall {
     fn from(val: u64) -> Syscall {
         match val {
             x if x == Syscall::Write as u64 => Syscall::Write,
-            _ => Syscall::Exit,
+            x if x == Syscall::Mmap as u64 => Syscall::Mmap,
+            x if x == Syscall::Exit as u64 => Syscall::Exit,
+            _ => panic!("unknown syscall number {val}"),
         }
     }
 }
@@ -34,27 +37,42 @@ fn copy_from_user(uptr: u64, size: usize) -> Box<[u8]> {
 
 pub fn handle_syscall(frame: &mut TrapFrame) {
     let pc = sepc::read();
-    let syscall = Syscall::from(frame.a0);
+    let syscall = Syscall::from(frame.a7);
     info!("Handling Syscall::{:?} at pc {:#x}", syscall, pc);
 
     let ret = match syscall {
         Syscall::Exit => {
-            info!("Userspace program exited with status code {}", frame.a1);
+            info!(
+                "Userspace program exited with status code {}",
+                frame.a0 as i64
+            );
             crate::exit();
         }
         Syscall::Write => {
-            let fd = frame.a1;
-            let buf = frame.a2;
-            let size = frame.a3;
-
-            assert_eq!(fd, 1);
+            let fd = frame.a0;
+            let buf = frame.a1;
+            let size = frame.a2;
 
             let data = copy_from_user(buf, size as usize);
             for c in data {
                 UartLogger.write(c);
             }
 
+            if fd == 2 {
+                UartLogger.write(b'\n');
+            }
+
             size
+        }
+        Syscall::Mmap => {
+            let addr = frame.a0;
+            let len = frame.a1;
+            let prot = frame.a2;
+            let flags = frame.a3;
+            let fd = frame.a4;
+            let offset = frame.a5;
+
+            0
         }
     };
 

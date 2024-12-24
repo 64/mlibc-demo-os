@@ -1,7 +1,7 @@
 use core::{cmp, ptr};
 
-use log::info;
-use riscv::register::sstatus::SPP;
+use log::{info, trace};
+use riscv::register::sstatus::{self, SPP};
 use xmas_elf::{
     program::{SegmentData, Type},
     ElfFile,
@@ -23,6 +23,8 @@ pub fn init(root: &mut PageTable) {
 
     let stack = map_stack(root);
 
+    info!("Jumping to userspace entrypoint at {:#x}", entry);
+
     unsafe {
         riscv::register::sstatus::set_spp(SPP::User);
         riscv::register::sepc::write(entry as usize);
@@ -36,7 +38,7 @@ pub fn load_elf(root: &mut PageTable) -> u64 {
         .program_iter()
         .filter(|phdr| phdr.get_type() == Ok(Type::Load))
     {
-        // trace!("{phdr}");
+        trace!("{phdr}");
 
         let base = phdr.virtual_addr();
         let mut data = match phdr.get_data(&elf) {
@@ -45,23 +47,28 @@ pub fn load_elf(root: &mut PageTable) -> u64 {
         };
 
         for virt in (base..base + phdr.mem_size()).step_by(0x1000) {
-            let mut prot = 0;
-            if phdr.flags().is_read() {
-                prot |= READ;
-            }
-            if phdr.flags().is_write() {
-                prot |= WRITE;
-            }
-            if phdr.flags().is_execute() {
-                prot |= EXECUTE;
-            }
+            root.map_page(virt, VALID | READ | WRITE);
+        }
 
-            let data_to_copy = data.take(..cmp::min(data.len(), 0x1000)).unwrap();
-            let addr = root.map_page(virt, VALID | USER | prot);
+        // Copy the initialised portion to memory
+        unsafe {
+            ptr::copy_nonoverlapping(data.as_ptr(), base as *mut u8, phdr.file_size() as usize);
+        }
 
-            unsafe {
-                ptr::copy_nonoverlapping(data_to_copy.as_ptr(), addr, data_to_copy.len());
-            }
+        let mut prot = 0;
+        if phdr.flags().is_read() {
+            prot |= READ;
+        }
+        if phdr.flags().is_write() {
+            prot |= WRITE;
+        }
+        if phdr.flags().is_execute() {
+            prot |= EXECUTE;
+        }
+
+        // Remap with the correct page flags
+        for virt in (base..base + phdr.mem_size()).step_by(0x1000) {
+            root.map_page(virt, VALID | USER | prot);
         }
     }
 
@@ -70,11 +77,11 @@ pub fn load_elf(root: &mut PageTable) -> u64 {
 
 pub fn map_stack(root: &mut PageTable) -> u64 {
     let stack_start = 0xF000000;
-    let stack_pages = 16;
+    let stack_pages = 1024;
 
     for i in 0..stack_pages {
-        root.map_page(stack_start + i * 0x1000, VALID | READ | WRITE);
+        root.map_page(stack_start + i * 0x1000, VALID | READ | WRITE | USER);
     }
 
-    stack_start
+    stack_start + stack_pages * 0x1000
 }
