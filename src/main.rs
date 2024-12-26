@@ -39,7 +39,7 @@ extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
         stvec::write(trap_handler as usize, TrapMode::Direct);
     }
 
-    logger::init(LevelFilter::Trace);
+    logger::init(LevelFilter::Info);
     info!("Booting mlibc-demo-os...");
 
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb).unwrap() };
