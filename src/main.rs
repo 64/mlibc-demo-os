@@ -15,15 +15,13 @@ use alloc::boxed::Box;
 use log::{info, LevelFilter};
 use logger::UartLogger;
 use page_table::PageTable;
-use riscv::register::{
-    scause, sepc, stval,
-    stvec::{self, TrapMode},
-};
+use riscv::register::stvec::{self, TrapMode};
 
 mod allocator;
 mod logger;
 mod page_table;
 mod syscalls;
+mod trap;
 mod userspace;
 
 core::arch::global_asm!(include_str!("boot.asm"));
@@ -34,7 +32,7 @@ extern "C" {
 }
 
 #[no_mangle]
-extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
+extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) -> ! {
     unsafe {
         stvec::write(trap_handler as usize, TrapMode::Direct);
     }
@@ -52,10 +50,7 @@ extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) {
     riscv::register::satp::write(satp);
     logger::paging_initialised();
 
-    userspace::init(&mut root_pt);
-
-    info!("Halting...");
-    exit();
+    userspace::init(&mut root_pt)
 }
 
 pub fn exit() -> ! {
@@ -71,66 +66,4 @@ pub fn exit() -> ! {
 fn abort(info: &PanicInfo) -> ! {
     let _ = writeln!(UartLogger, "\x1b[31mKERNEL PANIC:\x1b[0m {info}");
     exit();
-}
-
-#[repr(C)]
-#[derive(Debug)]
-struct TrapFrame {
-    sp: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    a4: u64,
-    a5: u64,
-    a6: u64,
-    a7: u64,
-    t0: u64,
-    t1: u64,
-    t2: u64,
-    t3: u64,
-    t4: u64,
-    t5: u64,
-    s0: u64,
-    s1: u64,
-    s2: u64,
-    s3: u64,
-    s4: u64,
-    s5: u64,
-    s6: u64,
-    s7: u64,
-    s8: u64,
-    s9: u64,
-    s10: u64,
-    s11: u64,
-    ra: u64,
-    tp: u64,
-    gp: u64,
-    t6: u64,
-}
-
-#[no_mangle]
-extern "C" fn rust_trap_handler(frame: &mut TrapFrame) {
-    let scause = scause::read();
-    if scause.is_exception() && scause.code() == 8 {
-        syscalls::handle_syscall(frame);
-    } else {
-        let _ = writeln!(
-            UartLogger,
-            concat!(
-                "---------------------------\n",
-                "[\x1b[31mKERNEL TRAP\x1b[0m] \x1b[31m{:?}\x1b[0m with stval = {:#x}, sepc = {:#x}",
-            ),
-            scause.cause(),
-            stval::read(),
-            sepc::read(),
-        );
-
-        let _ = sbi::system_reset::system_reset(
-            sbi::system_reset::ResetType::Shutdown,
-            sbi::system_reset::ResetReason::NoReason,
-        );
-
-        loop {}
-    }
 }

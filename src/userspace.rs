@@ -1,4 +1,4 @@
-use core::{cmp, ptr};
+use core::{arch::asm, cmp, ptr};
 
 use log::{debug, info, trace};
 use riscv::register::sstatus::{self, SPP};
@@ -15,7 +15,6 @@ const USERSPACE_BINARY: &[u8] = include_bytes!("../target/riscv64imac-unknown-no
 extern "C" {
     fn ret_to_user(stack: u64) -> !;
 }
-core::arch::global_asm!(include_str!("ret_to_user.asm"));
 
 pub struct Task {
     pub pt: *mut PageTable,
@@ -27,7 +26,7 @@ unsafe impl Send for Task {}
 // We only support one task.
 pub static TASK: Mutex<Option<Task>> = Mutex::new(None);
 
-pub fn init(root: &mut PageTable) {
+pub fn init(root: &mut PageTable) -> ! {
     info!("Loading userspace program...");
 
     let entrypoint = load_elf(root);
@@ -63,7 +62,7 @@ pub fn init(root: &mut PageTable) {
         riscv::register::sstatus::clear_sum();
         riscv::register::sstatus::set_spp(SPP::User);
         riscv::register::sepc::write(entrypoint as usize);
-        ret_to_user(stack as u64);
+        asm!("mv sp, {stack}\nsret", stack = in(reg) stack as u64, options(noreturn));
     }
 }
 

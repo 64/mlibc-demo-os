@@ -26,7 +26,6 @@ impl BumpAllocator {
 
         self.pos = alloc_end;
         let out = self.region.as_mut_ptr().wrapping_add(alloc_start);
-        // trace!("Allocated {} bytes at 0x{:x}", size, out as usize);
         out
     }
 }

@@ -1,12 +1,13 @@
 use alloc::boxed::Box;
+use core::fmt::Write;
 use log::{debug, info, trace};
 use riscv::register::{sepc, sstatus};
-use core::fmt::Write;
 
 use crate::{
     logger::UartLogger,
     page_table::{READ, USER, VALID, WRITE},
-    userspace, TrapFrame,
+    trap::TrapFrame,
+    userspace,
 };
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
             let fd = frame.a0;
             let buf = frame.a1;
             let size = frame.a2;
-            
+
             write!(UartLogger, "mlibc: ").unwrap();
 
             let data = copy_from_user(buf, size as usize);
