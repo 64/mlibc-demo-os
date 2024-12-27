@@ -1,15 +1,22 @@
 #!/bin/sh
 set -ex
 
-DESTDIR=$HOME/mlibc/install-headers ninja -C ~/mlibc/build install
+MLIBC_DIR=$HOME/mlibc
+CC_RUNTIME_DIR=$HOME/cc-runtime
 
-riscv64-elf-gcc -nostdinc -nostdlib -I $HOME/mlibc/install-headers/include \
-    user/user_test.c -g -c \
-    -o target/riscv64imac-unknown-none-elf/user_test.o
+OUT_DIR=target/riscv64imac-unknown-none-elf
+mkdir -p $OUT_DIR
 
-riscv64-elf-gcc -static -nostdinc -nostdlib -g -L$HOME/mlibc/build \
-    $HOME/mlibc/install-headers/lib/crt1.o \
-    target/riscv64imac-unknown-none-elf/user_test.o \
-    $HOME/mlibc/build/libc.a \
+# Build + install mlibc.
+# Note: do meson setup first.
+DESTDIR=$MLIBC_DIR/install-headers ninja -C $MLIBC_DIR/build install
+
+riscv64-elf-gcc \
+    -static -nostdinc -nostdlib -g \
+    -I $MLIBC_DIR/install-headers/include \
+    -L $MLIBC_DIR/build \
+    $MLIBC_DIR/install-headers/lib/crt1.o \
+    user/user_test.c \
+    $MLIBC_DIR/build/libc.a \
     $HOME/cc-runtime/cc-runtime.a \
-    -o target/riscv64imac-unknown-none-elf/user_test
+    -o $OUT_DIR/user_test

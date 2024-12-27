@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
-#![feature(fn_align)]
+#![allow(internal_features)]
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(extern_types)]
-#![feature(slice_take)]
+#![feature(core_intrinsics)]
 
 #[macro_use]
 extern crate alloc;
@@ -44,8 +44,9 @@ extern "C" fn kernel_main(_hart_id: u64, dtb: *const u8) -> ! {
     allocator::init(&fdt);
 
     let mut root_pt = Box::new(PageTable::new());
-    root_pt.map_higher_half();
+    root_pt.init_root_table();
 
+    // Enable Sv39 paging and set the root PT.
     let satp = (8 << 60) | (&*root_pt as *const PageTable as usize >> 12);
     riscv::register::satp::write(satp);
     logger::paging_initialised();

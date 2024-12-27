@@ -1,7 +1,9 @@
+use core::fmt::Write;
 use riscv::register::{scause, sepc, stval};
- use core::fmt::Write;
 
 use crate::{logger::UartLogger, syscalls};
+
+const ECALL_SCAUSE_CODE: usize = 8;
 
 // Layout defined in trap_handler.asm.
 #[repr(C)]
@@ -43,7 +45,7 @@ pub struct TrapFrame {
 #[no_mangle]
 extern "C" fn rust_trap_handler(frame: &mut TrapFrame) {
     let scause = scause::read();
-    if scause.is_exception() && scause.code() == 8 {
+    if scause.is_exception() && scause.code() == ECALL_SCAUSE_CODE {
         syscalls::handle_syscall(frame);
     } else {
         let _ = writeln!(

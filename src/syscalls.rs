@@ -1,14 +1,15 @@
-use alloc::boxed::Box;
 use core::fmt::Write;
 use log::{debug, info, trace};
-use riscv::register::{sepc, sstatus};
+use riscv::register::sepc;
 
 use crate::{
     logger::UartLogger,
     page_table::{READ, USER, VALID, WRITE},
     trap::TrapFrame,
-    userspace,
+    userspace::{self, copy_from_user},
 };
+
+const MLIBC_LOG_MAGIC_FD: u64 = 2;
 
 #[derive(Debug)]
 enum Syscall {
@@ -28,23 +29,13 @@ impl From<u64> for Syscall {
     }
 }
 
-fn copy_from_user(uptr: u64, size: usize) -> Box<[u8]> {
-    // trace!("copy_from_user: {:#x}, size = {}", uptr, size);
-    let mut out: Box<[u8]> = vec![0; size].into_boxed_slice();
-
-    unsafe {
-        sstatus::set_sum();
-        core::ptr::copy_nonoverlapping(uptr as *mut u8, out.as_mut_ptr(), size);
-        sstatus::clear_sum();
-    }
-
-    out
-}
-
 pub fn handle_syscall(frame: &mut TrapFrame) {
     let pc = sepc::read();
     let syscall = Syscall::from(frame.a7);
-    debug!("Handling Syscall::{:?} at pc {:#x}", syscall, pc);
+    debug!(
+        "Handling Syscall::{:?} at pc {:#x}: a0 = {:#x}, a1 = {:#x}, a2 = {:#x}",
+        syscall, pc, frame.a0, frame.a1, frame.a2
+    );
 
     let ret = match syscall {
         Syscall::Exit => {
@@ -59,14 +50,16 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
             let buf = frame.a1;
             let size = frame.a2;
 
-            write!(UartLogger, "mlibc: ").unwrap();
+            if fd == MLIBC_LOG_MAGIC_FD {
+                write!(UartLogger, "mlibc: ").unwrap();
+            }
 
-            let data = copy_from_user(buf, size as usize);
+            let data = unsafe { copy_from_user(buf, size as usize) };
             for c in data {
                 UartLogger.write(c);
             }
 
-            if fd == 2 {
+            if fd == MLIBC_LOG_MAGIC_FD {
                 UartLogger.write(b'\n');
             }
 
@@ -75,19 +68,23 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
         Syscall::Mmap => {
             let addr = frame.a0;
             let len = frame.a1;
-            let prot = frame.a2;
+            let _prot = frame.a2;
             let flags = frame.a3;
             let _fd = frame.a4;
             let _offset = frame.a5;
 
+            assert_eq!(addr, 0);
+            assert_eq!(flags, 32 | 2 /* MAP_ANONYMOUS | MAP_PRIVATE */);
+
             let mut task_lock = userspace::TASK.lock();
             let task = task_lock.as_mut().unwrap();
 
-            // Pick a suitable address.
-            assert_eq!(addr, 0);
+            // Pick a suitable address. We'll just bump a pointer to keep track of where we
+            // should allocate.
             let addr = 512 * 1024 * 1024 + task.heap_pages_allocated * 0x1000;
-
             let num_pages = len.div_ceil(0x1000);
+            task.heap_pages_allocated += num_pages;
+
             let pt = unsafe { &mut *task.pt };
 
             for virt in (addr..addr + (num_pages - 1) * 0x1000).step_by(0x1000) {
@@ -95,14 +92,12 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
                 pt.map_page(virt, VALID | USER | READ | WRITE);
             }
 
-            task.heap_pages_allocated += num_pages;
-
             trace!("mmap allocated {} pages from {:#x}", num_pages, addr);
             addr as u64
         }
     };
 
-    // sepc points to the ecall instruction; prepare returning to the next one.
+    // sepc points to the ecall instruction; prepare returning to the one after.
     sepc::write(pc + 4);
 
     frame.a0 = ret;

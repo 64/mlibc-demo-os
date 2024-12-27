@@ -1,6 +1,7 @@
 use core::alloc::{Allocator, Layout};
 
 use alloc::{alloc::Global, boxed::Box};
+use log::trace;
 
 #[repr(align(4096))]
 pub struct PageTable {
@@ -22,8 +23,7 @@ impl PageTable {
         Self { entries: [0; 512] }
     }
 
-    // For the root page table only.
-    pub fn map_higher_half(&mut self) {
+    pub fn init_root_table(&mut self) {
         for (i, entry) in self.entries.iter_mut().enumerate() {
             if i == 0 {
                 // Leave the first 1GiB unmapped for userspace.
@@ -32,6 +32,7 @@ impl PageTable {
                 // Map the zero 1GiB page at 511GiB. Useful for MMIO (UART).
                 *entry = READ | WRITE | EXECUTE | GLOBAL | VALID;
             } else {
+                // Otherwise, identity map the page.
                 *entry = (i as u64) << 28 | READ | WRITE | EXECUTE | GLOBAL | VALID;
             }
         }
@@ -44,10 +45,13 @@ impl PageTable {
         let out = self.do_map(virt & !0xfff, (flags | VALID) & USEFUL_FLAGS_MASK, 2);
         riscv::asm::sfence_vma_all();
 
-        // debug!(
-        //     "Mapped virtual address {:#x} -> physical address {:#x} with flags
-        // {:#b}",     virt, out as u64, flags
-        // );
+        trace!(
+            "Mapped virtual address {:#x} -> physical address {:#x} with flags
+        {:#b}",
+            virt,
+            out as u64,
+            flags
+        );
         out
     }
 
